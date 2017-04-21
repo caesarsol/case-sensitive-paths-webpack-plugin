@@ -1,121 +1,88 @@
 var assert = require("assert");
 var fs = require("fs");
 var path = require("path");
-var exec = require('child_process').exec;
 var webpack = require("webpack");
 
 var CaseSensitivePathsPlugin = require("../");
 
+function webpackCompilerAtDir(dir) {
+    return webpack({
+        context: path.join(__dirname, "fixtures", dir),
+        entry: "./entry",
+        output: {
+            path: path.join(__dirname, "js"),
+            filename: "result.js",
+        },
+        plugins: [
+            new CaseSensitivePathsPlugin()
+        ]
+    });
+}
+
 describe("CaseSensitivePathsPlugin", function() {
 
     it("should compile and warn on wrong filename case", function(done) {
-        webpack({
-            context: path.join(__dirname, "fixtures", "wrong-case"),
-            target: "node",
-            output: {
-                path: path.join(__dirname, "js"),
-                filename: "result.js",
-            },
-            entry: "./entry",
-            plugins: [
-                new CaseSensitivePathsPlugin()
-            ]
-        }, function(err, stats) {
+        var compiler = webpackCompilerAtDir("wrong-case");
+
+        compiler.run(function(err, stats) {
             if (err) done(err);
             assert(stats.hasErrors());
-            assert.equal(stats.hasWarnings(), false);
+            assert(!stats.hasWarnings());
             var jsonStats = stats.toJson();
             assert.equal(jsonStats.errors.length, 1);
 
-            var error = jsonStats.errors[0].split("\n");
+            var error = jsonStats.errors[0];
             // check that the plugin produces the correct output
-            assert(error[1].indexOf('[CaseSensitivePathsPlugin]') > -1);
-            assert(error[1].indexOf('TestFile.js') > -1); // wrong file require
-            assert(error[1].indexOf('testfile.js') > -1); // actual file name
+            assert(error.indexOf('[CaseSensitivePathsPlugin]') !== -1);
+            assert(error.indexOf('TestFile.js') !== -1); // wrong file require
+            assert(error.indexOf('testfile.js') !== -1); // actual file name
 
             done();
         });
     });
 
     it("should handle the deletion of a folder", function(done) {
-        var compiler = webpack({
-            context: path.join(__dirname, "fixtures", "deleting-folder"),
-            target: "node",
-            output: {
-                path: path.join(__dirname, "js"),
-                filename: "result.js",
-            },
-            entry: "./entry",
-            plugins: [
-                new CaseSensitivePathsPlugin()
-            ]
-        });
+        var compiler = webpackCompilerAtDir("deleting-folder");
 
-        // create folder and file to be deleted
         var testFolder = path.join(__dirname, "fixtures", "deleting-folder", "test-folder");
+        var testFile = path.join(testFolder, "testfile.js");
+
         fs.mkdirSync(testFolder);
-        fs.writeFileSync(path.join(testFolder, "testfile.js"), "module.exports = '';");
+        fs.writeFileSync(testFile, "module.exports = '';");
 
-        var watchCount = 0;
-        var watcher = compiler.watch({ poll: true }, function(err, stats) {
-
+        compiler.run(function (err, stats) {
             if (err) done(err);
-            watchCount++;
 
-            if (watchCount === 1) {
-                assert.equal(stats.hasErrors(), false);
-                assert.equal(stats.hasWarnings(), false);
+            assert(!stats.hasErrors());
+            assert(!stats.hasWarnings());
 
-                // wait for things to settle
-                setTimeout(function() {
-                    // after initial compile delete test folder
-                    exec("rm -r " + testFolder, function(err) { if (err) done(err); });
-                }, 100);
-                return;
-            }
+            fs.unlinkSync(testFile);
+            fs.rmdirSync(testFolder);
 
-            if (watchCount === 2) {
+            compiler.run(function (err, stats) {
+                if (err) done(err);
+
                 assert(stats.hasErrors());
-                assert.equal(stats.hasWarnings(), false);
+                assert(!stats.hasWarnings());
+                assert.equal(stats.toJson().errors.length, 1);
 
-                var jsonStats = stats.toJson();
-                assert.equal(jsonStats.errors.length, 1);
-
-                watcher.close(done);
-                return;
-            }
-
-            throw Error("Shouldn't be here...");
+                done();
+            });
         });
     });
 
     it("should work with alternate fileSystems", function(done) {
         var called = false;
 
-        webpack({
-            context: path.join(__dirname, "fixtures", "wrong-case"),
-            target: "node",
-            output: {
-                path: path.join(__dirname, "js"),
-                filename: "result.js",
-            },
-            entry: "./entry",
-            plugins: [
-                new CaseSensitivePathsPlugin(),
-                {
-                    apply: function(compiler) {
-                        var readdir;
-                        compiler.plugin('compile', function() {
-                            readdir = readdir || compiler.inputFileSystem.readdir;
-                            compiler.inputFileSystem.readdir = function(p, cb) {
-                                called = true;
-                                fs.readdir(p, cb);
-                            }
-                        })
-                    }
-                }
-            ]
-        }, function(err, stats) {
+        var compiler = webpackCompilerAtDir("wrong-case");
+
+        var readdirOriginal = compiler.inputFileSystem.readdir
+        compiler.inputFileSystem.readdir = function readdir(p, cb) {
+            called = true;
+            readdirOriginal.call(this, p, cb);
+        }
+
+        compiler.run(function(err, stats) {
             if (err) done(err);
             assert(called, 'should use compiler fs')
             done();
