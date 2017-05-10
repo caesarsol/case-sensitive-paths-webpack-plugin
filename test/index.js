@@ -1,5 +1,5 @@
 var assert = require("assert");
-var fs = require("fs");
+var fs = require("fs-extra");
 var path = require("path");
 var webpack = require("webpack");
 
@@ -69,6 +69,35 @@ describe("CaseSensitivePathsPlugin", function() {
                 done();
             });
         });
+    });
+
+    it("should handle the creation of a new file", function(done) {
+        var compiler = webpackCompilerAtDir("file-creation");
+
+        var testFile = path.join(__dirname, "fixtures", "file-creation", "testfile.js");
+        if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+
+        let compilationCount = 0
+        compiler.watch({}, function(err, stats) {
+          if (err) done(err);
+          compilationCount++;
+
+          if (compilationCount === 1) {
+            assert(stats.hasErrors());
+            assert(stats.toJson().errors[0].indexOf('Cannot resolve') !== -1)
+            assert(!stats.hasWarnings());
+
+            fs.writeFileSync(testFile, "module.exports = 0;");
+          } else if (compilationCount === 2) {
+            assert(fs.existsSync(testFile), 'Test file should exist')
+            assert(!stats.hasErrors(), 'Should have no errors, but has: \n' + stats.toJson().errors);
+            assert(!stats.hasWarnings());
+            fs.unlinkSync(testFile);
+            done()
+          } else {
+            throw new Error('Should not reach this point!')
+          }
+        })
     });
 
     it("should work with alternate fileSystems", function(done) {
